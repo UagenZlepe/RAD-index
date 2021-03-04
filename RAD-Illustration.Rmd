@@ -1,0 +1,150 @@
+---
+title: "RAD-index Illustration"
+author: "Duncan Nicol"
+date: "05/03/2021"
+output: html_document
+---
+
+```{r setup, collapse=TRUE, warning=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      dpi=80, fig.width=10, fig.height=7, fig.align = "center")
+
+library(tidyverse)
+library(plyr)
+library(sf)
+library(readr)
+library(ecospat)
+library(data.table)
+library(janitor)
+
+
+  # Load in custom functions from R script.
+source(here::here("./RAD-functions.R"), local = knitr::knit_global())
+
+
+
+```
+
+
+###   Load Species and Environment
+Read in the 2D points from records. These points could be longitude-latitude geographic coordinates or the reduced multivariate climate space of records (e.g. the first two principal components from a PCA would work). Below, the file **ExampleSpecies.csv** contains the embedded coordinates which were output from a locally linear embedding (LLE) algorithm (Roweis and Saul 2000). The original data were the geographic localities of herbarium specimens within the daisy genus *Celmisia*. This reduction algorithm was done on six ecologically relevant variables corresponding to those localities. Four of these variables were from the WordClim 2 database (including bio1, bio4, bio12, and bio15), a set of variables that performed well in previous analyses (Blonder 2014, Fick and Hijmans 2017). The other two variables were geostatistically based interpolations of megajoules per metre per day, models created  by Land Environments of New Zealand (https://lris.scinfo.org.nz/).
+
+**BackgroundEnvironment.csv** uses the same variables as above. It is the LLE coordinates for all of New Zealand at 2.5 arc-minutes. This background environment data is needed for calculating the Schoener's *D* and Warren's *I*. If you don't need to compare the RAD index with these other indices, then background environment data is unnecessary. 
+
+```{r loading}
+
+  # Load in two dimensions and labels.
+sp_xy <- read_csv('./ExampleSpecies.csv')
+
+  # Create vector of species names.
+sp_names <- unique(sp_xy$Species)
+
+  # Load in background environment for Schoener D and Warren I modelling.
+background_env_xy <- read_csv('./BackgroundEnvironment.csv')
+
+  # Split data into list of species.
+sp_list <- sp_xy %>% group_split(Species)
+
+```
+
+###   RAD index matrix
+The RAD-index is a measure of similarity between two species using the following procedure, as described in more detail in the corresponding article, and formulated as a function in the R-script **RAD_functions.R**. The RAD_index function takes two data.frames as arguments. The two data.frames need two variables named **dim1** and **dim2** referring to the point coordinates as these are selected using the dplyr package. 
+
+1.Calculate median distance between two sets of points.
+
+2.Create minimum bounding convex polygon of the two sets.
+
+3.Calculate the proportion of overlap between the polygons.
+
+4.Adjust the median distance as a function of overlap.
+
+5 Scale and take the reciprocal of the adjusted distance.
+
+Below is a matrix of similarity across the five chosen *Celmisia* species. Values closer to one mean higher similarity, where 1 signifies complete similarity. Values closer to zero mean lower similarity. 
+
+```{r RAD-i similarity matrix}
+
+  # Create a similarity matrix.
+RAD_i_matrix <- outer(sp_list,sp_list,Vectorize(RAD_index))
+rownames(RAD_i_matrix) <- sp_names
+colnames(RAD_i_matrix) <- sp_names
+round(data.frame(RAD_i_matrix),2)
+
+```
+
+
+###   Calculate Schoener's *D* and Warren's *I*
+
+The function DI_dist calculates Schoener's *D* and Warren's *I* including the p-value for both. 
+
+The function RAD_index calculates the RAD index between two species. 
+
+The code below calculates all indices above and compares them in a table. 
+
+```{r Calculate D and I}
+ 
+  # Model Schoener D and Warren I values and p-values for species pairs.
+WI.i <- data.frame(rbind(DI_dist(sp_list[[4]],sp_list[[1]]),
+                         DI_dist(sp_list[[4]],sp_list[[3]]),
+                         DI_dist(sp_list[[3]],sp_list[[5]]),
+                         DI_dist(sp_list[[2]],sp_list[[1]]),
+                         DI_dist(sp_list[[2]],sp_list[[3]]),
+                         DI_dist(sp_list[[1]],sp_list[[5]]),
+                         DI_dist(sp_list[[5]],sp_list[[5]])))
+
+```
+
+###   RAD index calculation
+
+The function **RAD_index** refers to custom function in file **RAD-functions.R** which calculates the RAD index for two species. It takes as its arguments two data.frames, representing the two species. The x and y variables for each species should be named "dim1" and "dim2" as there is a select function within the function.
+
+```{r Calculate RAD index}
+
+  # Model RAD index for species pairs
+RAD.i <- data.frame(rbind(cbind(RAD_index(sp_list[[4]],sp_list[[1]]),
+                                RAD_index(sp_list[[1]],sp_list[[4]])),
+                          cbind(RAD_index(sp_list[[4]],sp_list[[3]]),
+                                RAD_index(sp_list[[3]],sp_list[[4]])),
+                          cbind(RAD_index(sp_list[[3]],sp_list[[5]]),
+                                RAD_index(sp_list[[5]],sp_list[[3]])),
+                          cbind(RAD_index(sp_list[[2]],sp_list[[1]]),
+                                RAD_index(sp_list[[1]],sp_list[[2]])),
+                          cbind(RAD_index(sp_list[[2]],sp_list[[3]]),
+                                RAD_index(sp_list[[3]],sp_list[[2]])),
+                          cbind(RAD_index(sp_list[[1]],sp_list[[5]]),
+                                RAD_index(sp_list[[5]],sp_list[[1]])),
+                          cbind(RAD_index(sp_list[[5]],sp_list[[5]]),
+                                RAD_index(sp_list[[5]],sp_list[[5]]))))
+
+colnames(RAD.i) <- c('RADi-AB','RADi-BA')
+
+```
+
+
+
+###   RAD index comparison with Schoener's *D* and Warren's *I*
+
+*RADi-AB* is the RAD index value for species A to B. 
+
+*RADi-BA* is the RAD index value for species B to A.
+
+*D* and *p.D* is the Schoener's D index and its respective p-value.
+
+*I* and *p.I* is the Warren's I index and its respective p-value. 
+
+```{r Table Comparing RAD with D and I}
+  # Combine values into a data.frame for comparison.
+data.frame(A=sp_names[c(4,4,3,2,2,1,5)],
+           B=sp_names[c(1,3,5,1,3,5,5)],
+           round(RAD.i,2),
+           round(WI.i,2))
+
+```
+
+
+
+
+
+
+
